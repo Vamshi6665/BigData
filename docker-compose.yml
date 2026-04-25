@@ -1,0 +1,111 @@
+services:
+  postgres-airflow:
+    image: postgres:15
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+
+  warehouse:
+    image: postgres:15
+    container_name: warehouse
+    environment:
+      POSTGRES_USER: instacart
+      POSTGRES_PASSWORD: instacart
+      POSTGRES_DB: instacart
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_warehouse_data:/var/lib/postgresql/data
+
+  spark-master:
+    image: apache/spark:3.5.1
+    container_name: spark-master
+    command: >
+      /opt/spark/bin/spark-class
+      org.apache.spark.deploy.master.Master
+      --host spark-master
+    ports:
+      - "7077:7077"
+      - "8081:8080"
+    volumes:
+      - ./data:/opt/data
+      - ./spark:/opt/spark_jobs
+
+  spark-worker:
+    image: apache/spark:3.5.1
+    container_name: spark-worker
+    command: >
+      /opt/spark/bin/spark-class
+      org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - ./data:/opt/data
+      - ./spark:/opt/spark_jobs
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: instacart-airflow:latest
+    container_name: airflow-init
+    depends_on:
+      - postgres-airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark:/opt/spark_jobs
+      - ./data:/opt/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: /bin/bash
+    command: -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin"
+
+  airflow-webserver:
+    image: instacart-airflow:latest
+    container_name: airflow-webserver
+    depends_on:
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: "uVRX3PtbGkPXpUattG5/ww=="
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark:/opt/spark_jobs
+      - ./data:/opt/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: webserver
+
+  airflow-scheduler:
+    image: instacart-airflow:latest
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: "uVRX3PtbGkPXpUattG5/ww=="
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark:/opt/spark_jobs
+      - ./data:/opt/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: scheduler
+
+volumes:
+  postgres_airflow_data:
+  postgres_warehouse_data:
